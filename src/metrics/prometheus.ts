@@ -140,3 +140,19 @@ export const providerRequestsCounter = new client.Counter({
   labelNames: ['provider', 'status'] as const,
   registers: [register],
 });
+
+// 11. Intelligent Model Routing Decisions
+export const modelRoutingCounter = new client.Counter({
+  name: 'ai_gateway_model_routing_decisions_total',
+  help: 'Total model routing decisions triggered by intelligent cost optimizer',
+  labelNames: ['tier', 'selected_model'] as const,
+  registers: [register],
+});
+
+// 12. Security Webhooks & SIEM Incident Alerts
+export const securityAlertsCounter = new client.Counter({
+  name: 'ai_gateway_security_alerts_total',
+  help: 'Total security incident alerts dispatched to webhooks and SIEM systems',
+  labelNames: ['severity', 'event_type'] as const,
+  registers: [register],
+});

@@ -5,6 +5,7 @@ import { config } from './config/env.js';
 import { proxyRoutes } from './proxy/router.js';
 import { enterpriseAuthMiddleware } from './middleware/auth.js';
 import { logAuditEntry } from './middleware/audit-logger.js';
+import { tracer } from './tracing/tracer.js';
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -38,7 +39,21 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
 
   // Request hooks for authentication & audit logging
+  server.addHook('onRequest', async (req, _reply) => {
+    const incomingTrace = req.headers['traceparent'] as string | undefined;
+    (req as any).traceContext = tracer.parseOrCreateContext(incomingTrace);
+  });
+
   server.addHook('onRequest', enterpriseAuthMiddleware);
+
+  server.addHook('onSend', async (req, reply, payload) => {
+    const ctx = (req as any).traceContext;
+    if (ctx) {
+      reply.header('traceparent', ctx.traceparent);
+      reply.header('x-sentinel-trace-id', ctx.traceId);
+    }
+    return payload;
+  });
 
   server.addHook('onResponse', async (req, reply) => {
     const responseTime = reply.elapsedTime;

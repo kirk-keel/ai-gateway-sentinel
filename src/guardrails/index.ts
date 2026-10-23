@@ -6,6 +6,7 @@ import { recordGuardrailEvent } from '../metrics/finops.js';
 import { tokenVault } from '../vault/token-vault.js';
 import { VaultSession } from '../vault/types.js';
 import { config } from '../config/env.js';
+import { webhookDispatcher } from '../alerts/webhook-dispatcher.js';
 
 export type GuardrailMode = 'anonymize' | 'redact' | 'block';
 
@@ -79,6 +80,17 @@ export function evaluateGuardrails(
 
   if (injectionResult.isInjection) {
     recordGuardrailEvent('prompt_injection', 'blocked', tenant);
+    webhookDispatcher.emitAlert({
+      severity: injectionResult.score >= 0.85 ? 'CRITICAL' : 'HIGH',
+      eventType: 'PROMPT_INJECTION',
+      title: `Prompt Injection Blocked (${injectionResult.matchedRules.join(', ')})`,
+      tenant,
+      details: {
+        score: injectionResult.score,
+        matchedRules: injectionResult.matchedRules,
+      },
+    });
+
     const duration = performance.now() - startTotal;
     guardrailLatencyHistogram.observe(
       { check_type: 'pipeline' },

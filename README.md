@@ -143,11 +143,12 @@ docker compose ps
 
 | Service | Address | Description |
 | :--- | :--- | :--- |
-| **Sentinel Gateway** | `http://localhost:8000` | Security proxy & OpenAI API endpoint |
+| **Sentinel Gateway & API** | `http://localhost:8000` | Security proxy & OpenAI API endpoint |
+| **Sentinel Admin Dashboard** | `http://localhost:8000/dashboard` | Embedded management console & guardrails playground |
 | **Prometheus** | `http://localhost:9090` | Real-time metric scraper |
 | **Grafana** | `http://localhost:3000` | Visual dashboards (`admin` / `admin`) |
 | **Mock LLM Upstream** | `http://localhost:8001` | Built-in upstream LLM simulator |
-| **Redis** | `localhost:6379` | Exact prompt cache store |
+| **Redis** | `localhost:6379` | Exact prompt & token vault cache store |
 
 ---
 
@@ -305,6 +306,120 @@ ai_gateway_inference_cost_usd_total{model="gpt-4o",tenant="drilling-operations"}
 ai_gateway_guardrail_violations_total{violation_type="WELL_API_NUMBER",action="redacted",tenant="drilling-operations"} 1
 ai_gateway_guardrail_violations_total{violation_type="prompt_injection",action="blocked",tenant="untrusted-app"} 1
 ```
+
+---
+
+### 6. Intelligent Model Router (`sentinel-auto`)
+Submit queries to the virtual model alias `sentinel-auto`. Sentinel inspects complexity and automatically routes simple prompts to `gpt-4o-mini` (~94% cheaper) while assigning complex reasoning prompts to `gpt-4o`:
+
+```bash
+curl -i -s -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "sentinel-auto",
+    "messages": [
+      { "role": "user", "content": "Classify the sentiment of this operator drill log: All systems nominal." }
+    ]
+  }'
+```
+
+**Response Headers Added**:
+```http
+x-sentinel-routed-model: gpt-4o-mini
+x-sentinel-routing-tier: simple
+x-sentinel-routing-savings-pct: 94
+```
+
+---
+
+### 7. Scoped Cryptographic API Keys (RBAC)
+Generate enterprise bearer keys (`sent_live_...`) with specific model scopes and rate limits:
+
+```bash
+# 1. Create a scoped API key
+curl -s -X POST http://localhost:8000/v1/keys \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Subsurface Assistant Key",
+    "tenant": "geophysics",
+    "allowedModels": ["gpt-4o-mini"]
+  }' | jq
+
+# 2. Invoke chat completion with Bearer authentication
+curl -s -X POST http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer sent_live_your_generated_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o-mini",
+    "messages": [{ "role": "user", "content": "Estimate porosity." }]
+  }' | jq
+```
+
+---
+
+### 8. Tenant Budget Quotas & Spend Enforcement
+Inspect and configure hard/soft spending policies in USD:
+
+```bash
+# Set a $25 daily limit for the reservoir department
+curl -s -X POST http://localhost:8000/v1/quotas \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant": "reservoir-dept",
+    "dailyBudgetUSD": 25.0,
+    "monthlyBudgetUSD": 500.0,
+    "softLimitPercent": 0.8
+  }' | jq
+
+# Check active spend against quota
+curl -s http://localhost:8000/v1/quotas \
+  -H "x-tenant-id: reservoir-dept" | jq
+```
+
+---
+
+### 9. Multi-Provider Fallback & Circuit Breaker Health
+Monitor upstream provider targets and circuit breaker states:
+
+```bash
+curl -s http://localhost:8000/v1/providers | jq
+```
+
+**Response:**
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "primary-upstream",
+      "name": "Primary Upstream LLM",
+      "url": "http://mock-upstream:8001/v1",
+      "priority": 1,
+      "circuitState": "CLOSED",
+      "consecutiveFailures": 0
+    }
+  ]
+}
+```
+
+---
+
+### 10. OpenTelemetry Distributed Tracing (W3C TraceContext)
+Every request through Sentinel propagates W3C `traceparent` headers. Retrieve recent execution traces:
+
+```bash
+curl -s http://localhost:8000/v1/traces | jq
+```
+
+---
+
+### 11. Embedded Web Dashboard Console
+Navigate to **`http://localhost:8000/dashboard`** in your browser to access the responsive enterprise management console:
+* **FinOps Overview**: Live stat cards displaying daily spend and active provider status.
+* **Guardrails Playground**: Live interactive testing interface for prompt injection detection, PII scrubbing, and token vault preview.
+* **Providers & Circuits**: Real-time circuit breaker health indicators (`CLOSED` / `HALF_OPEN` / `OPEN`).
+* **API Key Manager**: Generate and revoke scoped API keys with a single click.
+* **Incident Log**: Live audit feed of security alerts from `/v1/alerts`.
 
 ---
 

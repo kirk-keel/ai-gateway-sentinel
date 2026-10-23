@@ -7,6 +7,12 @@ import { redisCache } from '../cache/redis-cache.js';
 import { tenantBudgetManager } from '../quota/budget-manager.js';
 import { TenantQuotaPolicy } from '../quota/types.js';
 import { providerDispatcher } from '../resilience/provider-dispatcher.js';
+import { modelRouter } from '../routing/model-router.js';
+import { apiKeyManager } from '../auth/key-manager.js';
+import { CreateApiKeyRequest } from '../auth/types.js';
+import { webhookDispatcher } from '../alerts/webhook-dispatcher.js';
+import { tracer } from '../tracing/tracer.js';
+import { getDashboardHtml } from '../dashboard/html.js';
 
 export async function proxyRoutes(
   fastify: FastifyInstance,
@@ -33,6 +39,16 @@ export async function proxyRoutes(
     });
   });
 
+  // Embedded Admin Dashboard UI
+  fastify.get('/dashboard', async (_req, reply) => {
+    reply.type('text/html; charset=utf-8');
+    return reply.code(200).send(getDashboardHtml());
+  });
+
+  fastify.get('/admin', async (_req, reply) => {
+    return reply.redirect('/dashboard');
+  });
+
   // 2. Prometheus /metrics Endpoint
   fastify.get('/metrics', async (_req, reply) => {
     const metrics = await register.metrics();
@@ -45,6 +61,8 @@ export async function proxyRoutes(
     return reply.code(200).send({
       object: 'list',
       data: [
+        { id: 'sentinel-auto', object: 'model', owned_by: 'sentinel-router' },
+        { id: 'sentinel-cost-optimized', object: 'model', owned_by: 'sentinel-router' },
         { id: 'gpt-4o', object: 'model', owned_by: 'openai' },
         { id: 'gpt-4o-mini', object: 'model', owned_by: 'openai' },
         { id: 'claude-3-5-sonnet', object: 'model', owned_by: 'anthropic' },
@@ -69,6 +87,43 @@ export async function proxyRoutes(
         lastFailureTime: s.lastFailureTime ? new Date(s.lastFailureTime).toISOString() : null,
         lastSuccessTime: s.lastSuccessTime ? new Date(s.lastSuccessTime).toISOString() : null,
       })),
+    });
+  });
+
+  // API Key Management Endpoints (RBAC)
+  fastify.post<{ Body: CreateApiKeyRequest }>('/v1/keys', async (req, reply) => {
+    const body = req.body;
+    if (!body || !body.name || !body.tenant) {
+      return reply.code(400).send({
+        error: { message: 'Body must include "name" and "tenant" fields' },
+      });
+    }
+
+    const created = apiKeyManager.createKey(body);
+    return reply.code(201).send({
+      message: 'API key created successfully. Store this secret safely; it will not be displayed again.',
+      apiKey: created.apiKey,
+      metadata: created.metadata,
+    });
+  });
+
+  fastify.get('/v1/keys', async (_req, reply) => {
+    const keys = apiKeyManager.listKeys();
+    return reply.code(200).send({
+      object: 'list',
+      data: keys,
+    });
+  });
+
+  fastify.delete<{ Params: { id: string } }>('/v1/keys/:id', async (req, reply) => {
+    const success = apiKeyManager.revokeKey(req.params.id);
+    if (!success) {
+      return reply.code(404).send({
+        error: { message: `Key with ID '${req.params.id}' not found` },
+      });
+    }
+    return reply.code(200).send({
+      message: `API key '${req.params.id}' revoked successfully`,
     });
   });
 
@@ -114,6 +169,26 @@ export async function proxyRoutes(
       });
     }
   );
+
+  // Security Alerts & SIEM Incidents Log Endpoint
+  fastify.get('/v1/alerts', async (_req, reply) => {
+    const alerts = webhookDispatcher.getRecentAlerts();
+    return reply.code(200).send({
+      object: 'list',
+      data: alerts,
+      count: alerts.length,
+    });
+  });
+
+  // Distributed Tracing Spans Endpoint
+  fastify.get('/v1/traces', async (_req, reply) => {
+    const spans = tracer.getRecentSpans();
+    return reply.code(200).send({
+      object: 'list',
+      data: spans,
+      count: spans.length,
+    });
+  });
 
   // 5. Quota & Budget Management Endpoints
   fastify.get('/v1/quotas', async (req, reply) => {
@@ -178,6 +253,18 @@ export async function proxyRoutes(
       // Check Tenant Budget Quota Limits
       const quotaResult = await tenantBudgetManager.checkBudget(tenant);
       if (!quotaResult.allowed) {
+        webhookDispatcher.emitAlert({
+          severity: 'HIGH',
+          eventType: 'BUDGET_DEPLETION',
+          title: `Tenant Budget Limit Depleted: ${tenant}`,
+          tenant,
+          details: {
+            currentSpendUSD: quotaResult.currentSpendUSD,
+            budgetCapUSD: quotaResult.budgetCapUSD,
+            period: quotaResult.period,
+          },
+        });
+
         return reply.code(429).send({
           error: {
             message: quotaResult.message,
@@ -194,6 +281,35 @@ export async function proxyRoutes(
 
       if (quotaResult.softLimitExceeded && quotaResult.message) {
         reply.header('x-sentinel-budget-warning', quotaResult.message);
+      }
+
+      // Intelligent Model Routing & Cost Optimization
+      const requestedModel = req.body.model || config.DEFAULT_MODEL;
+      const routingDecision = modelRouter.routeModel(
+        requestedModel,
+        req.body.messages || req.body.prompt
+      );
+      req.body.model = routingDecision.selectedModel;
+
+      // Validate model permissions against API Key metadata if authenticated via key
+      const keyMetadata = (req as any).keyMetadata;
+      if (keyMetadata && !apiKeyManager.isModelAllowed(keyMetadata, req.body.model)) {
+        return reply.code(403).send({
+          error: {
+            message: `Model '${req.body.model}' is not permitted under this API key's allowed scopes (${keyMetadata.allowedModels.join(', ')})`,
+            type: 'permission_denied',
+            code: 'model_not_allowed',
+          },
+        });
+      }
+
+      if (modelRouter.isAutoRoutingModel(requestedModel)) {
+        reply.header('x-sentinel-routed-model', routingDecision.selectedModel);
+        reply.header('x-sentinel-routing-tier', routingDecision.tier);
+        reply.header(
+          'x-sentinel-routing-savings-pct',
+          routingDecision.estimatedSavingsPct.toString()
+        );
       }
 
       // Execute Guardrails: Prompt Injection Check + Sensitive Operational PII Scrubbing
