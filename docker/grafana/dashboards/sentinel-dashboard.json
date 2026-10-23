@@ -1,0 +1,294 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "FinOps & Inference Economics",
+      "type": "row"
+    },
+    {
+      "id": 1,
+      "title": "Total Cumulative Cost (USD)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(ai_gateway_inference_cost_usd_total)",
+          "legendFormat": "Total USD Spent",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Total Tokens Processed",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(ai_gateway_tokens_total{type=\"total\"})",
+          "legendFormat": "Total Tokens",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "color": { "fixedColor": "blue", "mode": "fixed" }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "FinOps Cache Savings (USD)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(ai_gateway_cache_cost_saved_usd_total)",
+          "legendFormat": "USD Saved",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": { "fixedColor": "green", "mode": "fixed" }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Cache Hit Rate (%)",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "targets": [
+        {
+          "expr": "(sum(rate(ai_gateway_cache_hits_total[5m])) / (sum(rate(ai_gateway_cache_hits_total[5m])) + sum(rate(ai_gateway_cache_misses_total[5m])) + 0.0001)) * 100",
+          "legendFormat": "Hit Rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "green", "value": 60 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Cost Burn Rate by Model ($/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "expr": "sum by (model) (rate(ai_gateway_inference_cost_usd_total[1m]) * 60)",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth"
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Token Throughput (Tokens/sec)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "expr": "sum by (type) (rate(ai_gateway_tokens_total[1m]))",
+          "legendFormat": "{{type}} tokens",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth"
+          }
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "id": 101,
+      "title": "Security Guardrails & Operational PII Interceptions",
+      "type": "row"
+    },
+    {
+      "id": 7,
+      "title": "Prompt Injections Blocked",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "expr": "sum(ai_gateway_guardrail_violations_total{violation_type=\"prompt_injection\"}) or vector(0)",
+          "legendFormat": "Attacks Blocked",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Well API & Formation PII Redacted",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 14 },
+      "targets": [
+        {
+          "expr": "sum(ai_gateway_guardrail_violations_total{action=\"redacted\"}) or vector(0)",
+          "legendFormat": "PII Redactions",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "orange", "mode": "fixed" }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Guardrail Pipeline Latency (P99)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 14 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(ai_gateway_guardrail_latency_seconds_bucket[5m]))) * 1000",
+          "legendFormat": "P99 Latency (ms)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": { "fixedColor": "purple", "mode": "fixed" }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Security Interceptions by Category",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "targets": [
+        {
+          "expr": "sum by (violation_type) (rate(ai_gateway_guardrail_violations_total[5m]))",
+          "legendFormat": "{{violation_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": { "mode": "normal" }
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "End-to-End Model Latency (P50, P95, P99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(ai_gateway_model_latency_seconds_bucket[5m])))",
+          "legendFormat": "P50 Latency",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ai_gateway_model_latency_seconds_bucket[5m])))",
+          "legendFormat": "P95 Latency",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(ai_gateway_model_latency_seconds_bucket[5m])))",
+          "legendFormat": "P99 Latency",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["sentinel", "ai-gateway", "finops", "guardrails", "security"],
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m"]
+  },
+  "timezone": "browser",
+  "title": "AI Gateway Sentinel - Observability & Security",
+  "uid": "sentinel-overview",
+  "version": 1
+}
