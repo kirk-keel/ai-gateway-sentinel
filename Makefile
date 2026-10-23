@@ -1,5 +1,5 @@
 .RECIPEPREFIX = >
-.PHONY: setup up down logs test benchmark build dev clean
+.PHONY: setup up down logs test test-python test-all benchmark build dev clean
 
 setup:
 > cp -n .env.example .env || true
@@ -16,6 +16,12 @@ logs:
 
 test:
 > npm test
+
+test-python:
+> npm run test:python
+
+test-all:
+> npm run test:all
 
 benchmark:
 > npm run benchmark:security

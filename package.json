@@ -11,7 +11,9 @@
     "mock-upstream": "tsx src/mock-upstream/mock-server.ts",
     "benchmark:security": "tsx scripts/run-redteam-benchmark.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:python": "PYTHONPATH=sdk/python python3 -m unittest discover sdk/python/tests",
+    "test:all": "vitest run && npm run test:python"
   },
   "keywords": [
     "ai-gateway",

@@ -22,8 +22,16 @@ services:
       - REDIS_URL=redis://redis:6379
       - REDIS_CACHE_TTL_SECONDS=3600
       - GUARDRAILS_ENABLED=true
+      - GUARDRAILS_MODE=${GUARDRAILS_MODE:-anonymize}
       - GUARDRAILS_BLOCK_ON_PII=false
       - GUARDRAILS_INJECTION_THRESHOLD=0.65
+      - VAULT_TTL_SECONDS=1800
+      - SENTINEL_VAULT_KMS_KEY=${SENTINEL_VAULT_KMS_KEY:-sentinel-default-kms-master-secret-key-32b!}
+      - BUDGET_ENFORCEMENT_ENABLED=true
+      - DEFAULT_DAILY_BUDGET_USD=50.0
+      - DEFAULT_MONTHLY_BUDGET_USD=1000.0
+    volumes:
+      - ./configs:/app/configs:ro
     depends_on:
       redis:
         condition: service_healthy

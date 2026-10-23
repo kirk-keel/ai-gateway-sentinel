@@ -14,8 +14,9 @@ COPY package*.json tsconfig.json ./
 # Install all dependencies (including devDependencies for build)
 RUN npm ci
 
-# Copy source code
+# Copy source code and configs
 COPY src/ ./src/
+COPY configs/ ./configs/
 
 # Compile TypeScript to dist/
 RUN npm run build
@@ -42,6 +43,7 @@ ENV NODE_ENV=production \
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/configs ./configs
 
 # Harden security: run as non-root built-in node user
 USER node

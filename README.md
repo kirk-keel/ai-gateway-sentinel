@@ -17,6 +17,51 @@ It enforces **zero-trust guardrails**, scrubs **sensitive operational PII** (suc
 
 ## 🏗️ Architecture
 
+### System Architecture Overview (ASCII)
+
+```text
++---------------------------------------------------------------------------------------------------+
+|                                  ENTERPRISE APPLICATIONS & CLIENTS                                |
+|          Subsurface Copilots   |   Drilling Assistants   |   Autonomous Agents   |  SDKs          |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                          HTTPS / OpenAI Protocol | (x-tenant-id / Bearer API Key)
+                                                  v
++---------------------------------------------------------------------------------------------------+
+|                                 AI GATEWAY SENTINEL (Port :8000)                                  |
+|                                                                                                   |
+|  [ Ingress RBAC & Auth ] ──────────► [ Zero-Trust Security Pipeline ]                             |
+|  - Tenant ID Isolation              - Adversarial Injection Scanner (Confidence Heuristics)       |
+|  - Scoped API Keys (sent_live_...)  - Operational PII & DLP Scrubber (Wells, Depth, Formations)   |
+|  - Dynamic Rate Limiter             - Multi-Modal Vision DLP (GPS & Camera Metadata Scrubber)     |
+|                                     - Reversible Token Vault (AES-256-GCM Envelope Encryption)   |
+|                                                  |                                                |
+|                                                  v                                                |
+|  [ Caching & Model Routing ] <───────────────────┘                                                |
+|  - Redis Exact Prompt Cache (SHA-256 Keyed)                                                       |
+|  - Vector Semantic Cache (Cosine Similarity Cosine Match)                                         |
+|  - Virtual Router 'sentinel-auto' (Dynamic Cost/Latency Classifier)                                |
+|                                                  |                                                |
+|                                                  v                                                |
+|  [ Resilience & Output Governance ] ◄────────────┘                                                |
+|  - Multi-Provider Circuit Breakers (Exponential Backoff + Health EMA)                             |
+|  - Adaptive GPU Concurrency & Leaky-Bucket Queueing (SLA Priority)                                |
+|  - Output Guardrails (Secret Leak Prevention, RAG Groundedness Evaluator)                         |
+|  - Async Shadow Traffic Mirroring (A/B Model Drift Analysis)                                      |
++---------------------------------------------------------------------------------------------------+
+        |                                      |                                    |
+        | Prometheus Scrape (:8000/metrics)    | Redis Protocol (:6379)             | Upstream Forward
+        v                                      v                                    v
++--------------------+               +--------------------+               +-----------------------+
+| OBSERVABILITY STACK|               |   DATA STORAGE     |               | UPSTREAM LLM PROVIDERS|
+| - Prometheus :9090 |               | - Redis 7 (Alpine) |               | - OpenAI / Anthropic  |
+| - Grafana    :3000 |               | - KMS Token Vault  |               | - vLLM / Ollama (GPU) |
+| - OpenTelemetry W3C|               | - Dynamic Rules    |               | - Mock Upstream :8001 |
++--------------------+               +--------------------+               +-----------------------+
+```
+
+### Flow Diagram (Mermaid)
+
 ```mermaid
 flowchart LR
     subgraph EnterpriseClients["Enterprise Clients & Internal Apps"]
@@ -32,9 +77,13 @@ flowchart LR
         subgraph GuardrailEngine["Guardrails Security Engine"]
             Inj["Prompt Injection Defense (Heuristics & Delimiter Checks)"]
             PII["Operational PII & Confidential Data Scrubber"]
+            Vision["Vision DLP (EXIF Sanitizer)"]
+            Vault["Reversible Token Vault (AES-256-GCM)"]
         end
 
-        Cache["Redis Exact Match Prompt Cache"]
+        Cache["Redis Exact & Semantic Vector Cache"]
+        Router["Virtual Router ('sentinel-auto')"]
+        Resilience["Circuit Breakers & GPU Concurrency Queue"]
         FinOps["FinOps Observability Engine (prom-client)"]
         SSE["Streaming Engine & TTFT Analyzer"]
     end
@@ -56,10 +105,14 @@ flowchart LR
     EnterpriseClients -->|OpenAI-Compatible Requests| Auth
     Auth --> Inj
     Inj -->|Passed| PII
-    Inj -->|Blocked (403)| EnterpriseClients
-    PII -->|Cleaned Prompt| Cache
+    Inj -->|Blocked 403| EnterpriseClients
+    PII --> Vision
+    Vision --> Vault
+    Vault -->|Sanitized Prompt| Cache
     Cache <-->|Read / Write| Redis
-    Cache -->|Cache Miss| SSE
+    Cache -->|Cache Miss| Router
+    Router --> Resilience
+    Resilience --> SSE
     SSE -->|Forwarded Prompt| OpenAI
     SSE -->|Forwarded Prompt| LocalLLM
     
@@ -435,44 +488,101 @@ Grafana is pre-provisioned at `http://localhost:3000` (`admin` / `admin`). The *
 
 ## ⚙️ Configuration Reference
 
-Configure Sentinel via environment variables or a `.env` file:
+Configure Sentinel via environment variables or a `.env` file (see [`.env.example`](.env.example)):
 
 | Variable | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `PORT` | number | `8000` | Port for the Sentinel Fastify server |
 | `HOST` | string | `0.0.0.0` | Bind host address |
-| `UPSTREAM_LLM_URL` | string | `https://api.openai.com/v1` | Upstream LLM base URL (or mock upstream) |
+| `NODE_ENV` | string | `development` | Environment mode (`development`, `production`, `test`) |
+| `LOG_LEVEL` | string | `info` | Fastify Pino logger level (`fatal`, `error`, `warn`, `info`, `debug`, `trace`) |
+| `UPSTREAM_LLM_URL` | string | `https://api.openai.com/v1` | Upstream LLM base URL (or mock upstream simulator) |
 | `UPSTREAM_API_KEY` | string | `""` | Enterprise upstream API key (e.g., OpenAI / Anthropic) |
 | `DEFAULT_MODEL` | string | `gpt-4o` | Default model fallback |
-| `TENANT_HEADER_NAME` | string | `x-tenant-id` | HTTP header used for tenant attribution |
+| `TENANT_HEADER_NAME` | string | `x-tenant-id` | HTTP header used for tenant attribution & multi-tenancy |
 | `REDIS_ENABLED` | boolean | `true` | Enable exact prompt caching in Redis |
 | `REDIS_URL` | string | `redis://localhost:6379` | Redis connection URI |
 | `REDIS_CACHE_TTL_SECONDS` | number | `3600` | Cache time-to-live in seconds |
 | `GUARDRAILS_ENABLED` | boolean | `true` | Master switch for guardrails pipeline |
-| `GUARDRAILS_BLOCK_ON_PII` | boolean | `false` | When `true`, blocks PII with 403 instead of redacting |
-| `GUARDRAILS_INJECTION_THRESHOLD` | number | `0.65` | Sensitivity threshold (0.0 to 1.0) for injection detection |
+| `GUARDRAILS_MODE` | string | `anonymize` | Guardrail mode (`anonymize`, `redact`, `block`) |
+| `GUARDRAILS_BLOCK_ON_PII` | boolean | `false` | When `true`, blocks PII with HTTP 403 instead of redacting |
+| `GUARDRAILS_INJECTION_THRESHOLD`| number| `0.65` | Sensitivity threshold (0.0 to 1.0) for injection detection |
+| `VAULT_TTL_SECONDS` | number | `1800` | Reversible tokenization session vault TTL in seconds |
+| `SENTINEL_VAULT_KMS_KEY` | string | `sentinel-default-...`| Master KMS secret key for AES-256-GCM vault envelope encryption |
+| `BUDGET_ENFORCEMENT_ENABLED`| boolean | `true` | Enable FinOps hard and soft budget limits per tenant |
+| `DEFAULT_DAILY_BUDGET_USD` | number | `50.0` | Default daily spend cap per tenant in USD |
+| `DEFAULT_MONTHLY_BUDGET_USD`| number | `1000.0` | Default monthly spend cap per tenant in USD |
+| `RATE_LIMIT_MAX` | number | `100` | Maximum requests permitted per window per tenant |
+| `RATE_LIMIT_WINDOW_MS` | number | `60000` | Rate limiting sliding window duration in milliseconds |
+| `ALERT_WEBHOOK_URL` | string | `""` | Optional HTTP webhook endpoint for security incident dispatches |
+| `ALERT_WEBHOOK_SECRET` | string | `""` | Secret signature key for HMAC webhook verification |
+
+---
+
+## 📁 Repository Structure
+
+```text
+ai-gateway-sentinel/
+├── src/                    # Core Gateway Application
+│   ├── index.ts            # Application bootstrap & lifecycle management
+│   ├── server.ts           # Fastify server instance, routes, and plugins
+│   ├── auth/               # Scoped API key management & RBAC validation
+│   ├── guardrails/         # Injection defense, PII scrubbing, Vision DLP, Groundedness
+│   ├── vault/              # Reversible token vault with AES-256-GCM KMS envelope encryption
+│   ├── cache/              # Redis exact cache and in-memory semantic vector cache
+│   ├── finops/             # Prometheus metrics registry and token pricing models
+│   ├── routing/            # Intelligent virtual model router ('sentinel-auto')
+│   ├── resilience/         # Circuit breakers, multi-provider fallback, GPU queue
+│   ├── mirroring/          # Asynchronous shadow traffic mirroring & drift analysis
+│   ├── compliance/         # Cryptographically signed compliance audit reports
+│   ├── dashboard/          # Embedded real-time management console UI
+│   └── mock-upstream/      # Local OpenAI-compatible mock LLM server
+├── tests/                  # Automated Test Suite (22 suites, 113 tests)
+├── configs/                # Declarative configuration manifests & pricing tables
+│   ├── gateway.json        # Main gateway runtime settings & thresholds
+│   ├── pricing.json        # Model inference token pricing rates (USD)
+│   └── rules.json          # Declarative PII and injection detection rules
+├── docker/                 # Containerization & Infrastructure
+│   ├── prometheus/         # Prometheus scrape configuration
+│   └── grafana/            # Provisioned data sources and visual dashboards
+├── docs/                   # Architecture, ADRs, Security & Development guides
+│   └── adr/                # Architectural Decision Records (0001-0005)
+├── sdk/                    # Drop-in Client SDKs
+│   ├── typescript/         # TypeScript / Node.js Sentinel SDK
+│   └── python/             # Python standard library Sentinel SDK & unit tests
+├── scripts/                # Red-team adversarial security benchmark harness
+├── Dockerfile              # Multi-stage hardened production container image
+├── docker-compose.yml      # Full-stack composition (Sentinel, Redis, Prometheus, Grafana, Mock)
+└── Makefile                # Developer automation shortcuts
+```
 
 ---
 
 ## 🛠️ Local Development & Testing
 
 ```bash
-# Install dependencies
+# 1. Install dependencies
 npm install
 
-# Run TypeScript compilation
+# 2. Run TypeScript compilation
 npm run build
 
-# Run unit and integration tests (113 tests across 22 suites)
+# 3. Run unit and integration tests (Vitest: 113 tests across 22 suites)
 npm test
 
-# Run automated red-teaming security benchmark
+# 4. Run Python SDK unit tests (unittest)
+npm run test:python
+
+# 5. Run polyglot test suite (TypeScript Vitest + Python unittest)
+npm run test:all
+
+# 6. Run automated red-teaming security benchmark (18 attack vectors, 100% catch rate)
 npm run benchmark:security
 
-# Run development mode with hot-reloading
+# 7. Run development mode with hot-reloading
 npm run dev
 
-# Run standalone mock upstream server
+# 8. Run standalone mock upstream server
 npm run mock-upstream
 ```
 

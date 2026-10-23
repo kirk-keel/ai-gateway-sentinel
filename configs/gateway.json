@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0.0",
+  "gateway": {
+    "port": 8000,
+    "host": "0.0.0.0",
+    "logLevel": "info",
+    "defaultModel": "gpt-4o",
+    "tenantHeader": "x-tenant-id"
+  },
+  "guardrails": {
+    "enabled": true,
+    "mode": "anonymize",
+    "blockOnPii": false,
+    "injectionThreshold": 0.65,
+    "vaultTtlSeconds": 1800
+  },
+  "cache": {
+    "redisEnabled": true,
+    "ttlSeconds": 3600,
+    "similarityThreshold": 0.92
+  },
+  "finops": {
+    "budgetEnforcementEnabled": true,
+    "defaultDailyBudgetUsd": 50.0,
+    "defaultMonthlyBudgetUsd": 1000.0,
+    "rateLimitMax": 100,
+    "rateLimitWindowMs": 60000
+  },
+  "resilience": {
+    "timeoutMs": 30000,
+    "maxRetries": 3,
+    "circuitBreaker": {
+      "failureThreshold": 5,
+      "resetTimeoutMs": 30000
+    }
+  }
+}

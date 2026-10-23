@@ -1,0 +1,42 @@
+[
+  {
+    "id": "rule-ssn-default",
+    "name": "Social Security Number Masking",
+    "type": "PII",
+    "pattern": "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+    "category": "SSN",
+    "replacementToken": "[REDACTED_SSN]",
+    "action": "ANONYMIZE",
+    "enabled": true
+  },
+  {
+    "id": "rule-email-default",
+    "name": "Corporate Email Anonymizer",
+    "type": "PII",
+    "pattern": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,7}\\b",
+    "category": "EMAIL",
+    "replacementToken": "[REDACTED_EMAIL]",
+    "action": "ANONYMIZE",
+    "enabled": true
+  },
+  {
+    "id": "rule-secret-keys",
+    "name": "API Key & Token Leak Detector",
+    "type": "PII",
+    "pattern": "(?:sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36}|AIza[0-9A-Za-z-_]{35})",
+    "category": "API_KEY",
+    "replacementToken": "[REDACTED_SECRET_KEY]",
+    "action": "BLOCK",
+    "enabled": true
+  },
+  {
+    "id": "rule-prompt-inj-jailbreak",
+    "name": "Jailbreak Heuristic Filter",
+    "type": "PROMPT_INJECTION",
+    "pattern": "(?i)(ignore (all )?previous instructions|you are now DAN|system prompt reveal)",
+    "category": "JAILBREAK",
+    "replacementToken": "[BLOCKED_INJECTION]",
+    "action": "BLOCK",
+    "enabled": true
+  }
+]
