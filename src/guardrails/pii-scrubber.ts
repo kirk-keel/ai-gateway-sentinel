@@ -1,4 +1,5 @@
 import { PiiScrubResult, PiiViolation } from './types.js';
+import { dynamicRulesManager } from '../rules/rules-manager.js';
 
 interface RedactionRule {
   category: string;
@@ -117,8 +118,10 @@ export function scrubOperationalPII(
   }
 
   const disabled = new Set(options.disabledCategories || []);
+  const dynamicRules = dynamicRulesManager.getActivePiiRules();
   const activeRules = [
     ...(options.rules || OPERATIONAL_PII_RULES),
+    ...dynamicRules,
     ...(options.customRules || []),
   ].filter((r) => !disabled.has(r.category));
 

@@ -1,0 +1,21 @@
+{
+  "name": "@ai-gateway/sentinel-sdk",
+  "version": "1.0.0",
+  "description": "Zero-friction TypeScript/JavaScript drop-in SDK for AI Gateway Sentinel",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "ai-gateway",
+    "llm",
+    "security",
+    "guardrails",
+    "finops",
+    "openai"
+  ],
+  "author": "AI Gateway Sentinel Contributors",
+  "license": "Apache-2.0"
+}

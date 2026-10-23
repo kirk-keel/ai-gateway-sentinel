@@ -86,6 +86,70 @@ describe('Resilience: Multi-Provider Dispatcher & Automatic Failover', () => {
     expect(providers[0].id).toBe('failing-primary');
     expect(providers[1].id).toBe('standby-secondary');
   });
+
+  it('selects provider with lowest EMA latency when strategy is latency-aware', () => {
+    const dispatcher = new ProviderDispatcher();
+    dispatcher.clearProviders();
+
+    dispatcher.registerProvider({
+      id: 'us-east-azure',
+      name: 'Azure US East',
+      url: 'https://azure.openai.mock/v1',
+      priority: 1,
+    });
+
+    dispatcher.registerProvider({
+      id: 'us-west-bedrock',
+      name: 'Bedrock US West',
+      url: 'https://bedrock.mock/v1',
+      priority: 2,
+    });
+
+    // Simulate Azure having 250ms latency and Bedrock having 45ms latency
+    dispatcher.circuitBreaker.recordSuccess('us-east-azure', 250);
+    dispatcher.circuitBreaker.recordSuccess('us-west-bedrock', 45);
+
+    dispatcher.setRoutingStrategy('latency');
+    const candidates = dispatcher.getCandidateProviders();
+
+    expect(candidates[0].id).toBe('us-west-bedrock');
+    expect(candidates[1].id).toBe('us-east-azure');
+  });
+
+  it('performs weighted round-robin distribution when strategy is weighted', () => {
+    const dispatcher = new ProviderDispatcher();
+    dispatcher.clearProviders();
+
+    dispatcher.registerProvider({
+      id: 'heavy-provider',
+      name: 'Heavy 90%',
+      url: 'https://heavy.mock/v1',
+      priority: 1,
+      weight: 90,
+    });
+
+    dispatcher.registerProvider({
+      id: 'light-provider',
+      name: 'Light 10%',
+      url: 'https://light.mock/v1',
+      priority: 1,
+      weight: 10,
+    });
+
+    dispatcher.setRoutingStrategy('weighted');
+
+    let heavyCount = 0;
+    const trials = 100;
+    for (let i = 0; i < trials; i++) {
+      const candidates = dispatcher.getCandidateProviders();
+      if (candidates[0].id === 'heavy-provider') {
+        heavyCount++;
+      }
+    }
+
+    // Heavy provider should be selected ~90% of the time (safely > 70%)
+    expect(heavyCount).toBeGreaterThan(70);
+  });
 });
 
 describe('Integration: Providers Health Endpoint', () => {

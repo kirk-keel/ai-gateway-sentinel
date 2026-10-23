@@ -1,4 +1,5 @@
 export type CircuitBreakerState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+export type ProviderRoutingStrategy = 'priority' | 'weighted' | 'latency';
 
 export interface ProviderTarget {
   id: string;
@@ -6,6 +7,7 @@ export interface ProviderTarget {
   url: string;
   apiKey?: string;
   priority: number; // 1 = Primary, 2 = Secondary, 3 = Fallback
+  weight?: number; // Relative weight (e.g. 70, 30) for weighted routing
   timeoutMs?: number;
 }
 
@@ -21,4 +23,5 @@ export interface ProviderStatus {
   consecutiveFailures: number;
   lastFailureTime: number;
   lastSuccessTime: number;
+  emaLatencyMs?: number;
 }

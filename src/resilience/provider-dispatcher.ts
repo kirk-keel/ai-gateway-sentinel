@@ -4,7 +4,7 @@ import {
   providerRequestsCounter,
 } from '../metrics/prometheus.js';
 import { CircuitBreaker } from './circuit-breaker.js';
-import { ProviderTarget } from './types.js';
+import { ProviderRoutingStrategy, ProviderTarget } from './types.js';
 
 export interface DispatchResult {
   response: Response;
@@ -16,6 +16,7 @@ export interface DispatchResult {
 export class ProviderDispatcher {
   public circuitBreaker: CircuitBreaker;
   private providers: ProviderTarget[] = [];
+  private routingStrategy: ProviderRoutingStrategy = 'priority';
 
   constructor() {
     this.circuitBreaker = new CircuitBreaker();
@@ -48,8 +49,49 @@ export class ProviderDispatcher {
     this.providers = [];
   }
 
+  public setRoutingStrategy(strategy: ProviderRoutingStrategy): void {
+    this.routingStrategy = strategy;
+  }
+
+  public getRoutingStrategy(): ProviderRoutingStrategy {
+    return this.routingStrategy;
+  }
+
   public getProviders(): ProviderTarget[] {
     return [...this.providers];
+  }
+
+  public getCandidateProviders(): ProviderTarget[] {
+    const available = this.providers.filter((p) => this.circuitBreaker.canExecute(p.id));
+    if (available.length <= 1) return available;
+
+    if (this.routingStrategy === 'latency') {
+      return [...available].sort((a, b) => {
+        const latA = this.circuitBreaker.getProviderStatus(a.id)?.emaLatencyMs ?? 999999;
+        const latB = this.circuitBreaker.getProviderStatus(b.id)?.emaLatencyMs ?? 999999;
+        if (latA !== latB) return latA - latB;
+        return a.priority - b.priority;
+      });
+    }
+
+    if (this.routingStrategy === 'weighted') {
+      const totalWeight = available.reduce((sum, p) => sum + (p.weight ?? 1), 0);
+      let rand = Math.random() * totalWeight;
+      let selectedIndex = 0;
+      for (let i = 0; i < available.length; i++) {
+        rand -= available[i].weight ?? 1;
+        if (rand <= 0) {
+          selectedIndex = i;
+          break;
+        }
+      }
+      const selected = available[selectedIndex];
+      const others = available.filter((_, idx) => idx !== selectedIndex);
+      return [selected, ...others];
+    }
+
+    // Default 'priority'
+    return [...available].sort((a, b) => a.priority - b.priority);
   }
 
   public async dispatchChatCompletion(
@@ -61,10 +103,12 @@ export class ProviderDispatcher {
     let lastResponse: Response | null = null;
     let failoverOccurred = false;
 
-    for (let i = 0; i < this.providers.length; i++) {
-      const provider = this.providers[i];
+    const candidateProviders = this.getCandidateProviders();
 
-      // Check if circuit breaker allows execution
+    for (let i = 0; i < candidateProviders.length; i++) {
+      const provider = candidateProviders[i];
+
+      // Re-verify circuit breaker state
       if (!this.circuitBreaker.canExecute(provider.id)) {
         continue;
       }
@@ -88,6 +132,7 @@ export class ProviderDispatcher {
       const timeoutMs = provider.timeoutMs || 15000;
       const controller = new AbortController();
       const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+      const callStartTime = Date.now();
 
       try {
         const response = await fetch(url, {
@@ -98,6 +143,7 @@ export class ProviderDispatcher {
         });
 
         clearTimeout(timeoutHandle);
+        const durationMs = Date.now() - callStartTime;
 
         // If provider returned 5xx server error or 429 rate limit, treat as failure and failover
         if (response.status >= 500 || response.status === 429) {
@@ -109,7 +155,7 @@ export class ProviderDispatcher {
           lastResponse = response;
 
           // Track failover to next provider if available
-          const nextProvider = this.providers[i + 1];
+          const nextProvider = candidateProviders[i + 1];
           if (nextProvider) {
             failoverCounter.inc({
               from_provider: provider.id,
@@ -120,7 +166,7 @@ export class ProviderDispatcher {
         }
 
         // Success!
-        this.circuitBreaker.recordSuccess(provider.id);
+        this.circuitBreaker.recordSuccess(provider.id, durationMs);
         providerRequestsCounter.inc({
           provider: provider.id,
           status: response.status.toString(),
@@ -141,7 +187,7 @@ export class ProviderDispatcher {
         });
         lastError = err;
 
-        const nextProvider = this.providers[i + 1];
+        const nextProvider = candidateProviders[i + 1];
         if (nextProvider) {
           failoverCounter.inc({
             from_provider: provider.id,

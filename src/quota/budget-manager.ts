@@ -46,6 +46,10 @@ export class TenantBudgetManager {
     );
   }
 
+  public getAllPolicies(): TenantQuotaPolicy[] {
+    return Array.from(this.policies.values());
+  }
+
   private getKeys(tenant: string): { dayKey: string; monthKey: string } {
     const now = new Date();
     const day = now.toISOString().slice(0, 10); // YYYY-MM-DD

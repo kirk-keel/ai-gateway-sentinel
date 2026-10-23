@@ -67,13 +67,21 @@ export class CircuitBreaker {
     return false;
   }
 
-  public recordSuccess(providerId: string): void {
+  public recordSuccess(providerId: string, latencyMs?: number): void {
     const status = this.providers.get(providerId);
     if (!status) return;
 
     status.state = 'CLOSED';
     status.consecutiveFailures = 0;
     status.lastSuccessTime = Date.now();
+    if (latencyMs !== undefined) {
+      if (status.emaLatencyMs === undefined) {
+        status.emaLatencyMs = latencyMs;
+      } else {
+        // Exponential Moving Average with alpha = 0.3
+        status.emaLatencyMs = Number((0.3 * latencyMs + 0.7 * status.emaLatencyMs).toFixed(2));
+      }
+    }
     circuitStateGauge.set({ provider: providerId }, 0);
   }
 

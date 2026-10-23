@@ -1,4 +1,6 @@
 import { InjectionCheckResult } from './types.js';
+import { dynamicRulesManager } from '../rules/rules-manager.js';
+import { detectIndirectInjection } from './indirect-injection.js';
 
 interface InjectionPattern {
   name: string;
@@ -63,7 +65,7 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
   // Delimiter / Chat markup injection
   {
     name: 'DELIMITER_INJECTION_TOKENS',
-    weight: 0.6,
+    weight: 0.75,
     regex: /(?:<\|im_start\|>|<\|im_end\|>|\[\/?INST\]|<<SYS>>|<\/system>|<system>|---BEGIN (?:SYSTEM|PROMPT)---)/i,
     description: 'LLM chat template delimiter injection',
   },
@@ -71,15 +73,15 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
   // System prompt exfiltration
   {
     name: 'SYSTEM_PROMPT_EXFILTRATION',
-    weight: 0.5,
-    regex: /\b(?:output|print|reveal|repeat|dump|show|display)\s+(?:your\s+)?(?:exact\s+)?(?:system\s+prompt|initial\s+prompt|pre-prompt|system\s+instructions|base\s+instructions|developer\s+prompt)\b/i,
+    weight: 0.7,
+    regex: /\b(?:output|print|reveal|repeat|dump|show|display)\s+(?:(?:your|the|any)\s+)?(?:exact\s+)?(?:system\s+prompt|initial\s+(?:system\s+)?(?:pre-prompt|prompt)|system\s+instructions|base\s+instructions|developer\s+prompt)\b/i,
     description: 'Attempt to exfiltrate or leak upstream system instructions',
   },
 
   // Fictional / Hypothetical safety bypass
   {
     name: 'HYPOTHETICAL_SAFETY_BYPASS',
-    weight: 0.45,
+    weight: 0.7,
     regex: /\b(?:in\s+a\s+fictional\s+world\s+without\s+rules|hypothetically\s+if\s+you\s+had\s+no\s+safety|pretend\s+you\s+have\s+no\s+ethical|simulate\s+an\s+AI\s+without\s+content\s+filters)\b/i,
     description: 'Hypothetical framing designed to bypass ethical boundaries',
   },
@@ -87,7 +89,7 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
   // Markdown / Token smuggling
   {
     name: 'TOKEN_SMUGGLING_RAW_JSON',
-    weight: 0.4,
+    weight: 0.7,
     regex: /"(?:role|system|assistant)"\s*:\s*"(?:system|admin)"\s*,\s*"content"\s*:/i,
     description: 'Attempted raw JSON message frame smuggling',
   },
@@ -116,11 +118,21 @@ export function detectPromptInjection(
   const matchedRules: string[] = [];
   let cumulativeWeight = 0;
 
-  for (const pattern of INJECTION_PATTERNS) {
+  const dynamicPatterns = dynamicRulesManager.getActiveInjectionRules();
+  const allPatterns = [...INJECTION_PATTERNS, ...dynamicPatterns];
+
+  for (const pattern of allPatterns) {
     if (pattern.regex.test(textToScan)) {
       matchedRules.push(pattern.name);
       cumulativeWeight += pattern.weight;
     }
+  }
+
+  // Check indirect injection patterns (HTML comments, hidden system directives)
+  const indirectResult = detectIndirectInjection(textToScan);
+  if (indirectResult.hasInjection) {
+    matchedRules.push('INDIRECT_PROMPT_INJECTION');
+    cumulativeWeight += 0.75;
   }
 
   // Normalize score between 0 and 1.0 (cap at 1.0)

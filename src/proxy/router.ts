@@ -11,8 +11,11 @@ import { modelRouter } from '../routing/model-router.js';
 import { apiKeyManager } from '../auth/key-manager.js';
 import { CreateApiKeyRequest } from '../auth/types.js';
 import { webhookDispatcher } from '../alerts/webhook-dispatcher.js';
+import { dynamicRulesManager } from '../rules/rules-manager.js';
+import { CreateDynamicRuleInput, DynamicRuleType } from '../rules/types.js';
 import { tracer } from '../tracing/tracer.js';
 import { getDashboardHtml } from '../dashboard/html.js';
+import { complianceReportGenerator } from '../compliance/report-generator.js';
 
 export async function proxyRoutes(
   fastify: FastifyInstance,
@@ -127,6 +130,66 @@ export async function proxyRoutes(
     });
   });
 
+  // Dynamic Hot-Reloadable Rules Engine Endpoints
+  fastify.get<{ Querystring: { type?: DynamicRuleType; enabled?: string } }>(
+    '/v1/rules',
+    async (req, reply) => {
+      const type = req.query.type;
+      const enabled =
+        req.query.enabled !== undefined
+          ? req.query.enabled === 'true'
+          : undefined;
+      const rules = dynamicRulesManager.listRules({ type, enabled });
+      return reply.code(200).send({
+        object: 'list',
+        data: rules,
+      });
+    }
+  );
+
+  fastify.post<{ Body: CreateDynamicRuleInput }>('/v1/rules', async (req, reply) => {
+    const body = req.body;
+    if (!body || !body.name || !body.type || !body.pattern) {
+      return reply.code(400).send({
+        error: { message: 'Body must include "name", "type" (PII|INJECTION), and "pattern"' },
+      });
+    }
+
+    try {
+      const created = dynamicRulesManager.addRule(body);
+      return reply.code(201).send({
+        message: 'Dynamic rule created and activated successfully',
+        rule: created,
+      });
+    } catch (err: any) {
+      return reply.code(400).send({
+        error: { message: `Invalid rule pattern: ${err.message}` },
+      });
+    }
+  });
+
+  fastify.get<{ Params: { id: string } }>('/v1/rules/:id', async (req, reply) => {
+    const rule = dynamicRulesManager.getRule(req.params.id);
+    if (!rule) {
+      return reply.code(404).send({
+        error: { message: `Rule '${req.params.id}' not found` },
+      });
+    }
+    return reply.code(200).send(rule);
+  });
+
+  fastify.delete<{ Params: { id: string } }>('/v1/rules/:id', async (req, reply) => {
+    const success = dynamicRulesManager.deleteRule(req.params.id);
+    if (!success) {
+      return reply.code(404).send({
+        error: { message: `Rule '${req.params.id}' not found` },
+      });
+    }
+    return reply.code(200).send({
+      message: `Dynamic rule '${req.params.id}' deleted successfully`,
+    });
+  });
+
   // 4. Pre-Flight Guardrails Inspection Endpoint
   fastify.post<{ Body: { text: string; blockOnPii?: boolean; threshold?: number } }>(
     '/v1/guardrails/check',
@@ -189,6 +252,27 @@ export async function proxyRoutes(
       count: spans.length,
     });
   });
+
+  // Automated Compliance Audit Report Generator
+  fastify.get<{ Querystring: { format?: 'json' | 'csv' } }>(
+    '/v1/compliance/report',
+    async (req, reply) => {
+      const format = req.query.format || 'json';
+      const report = await complianceReportGenerator.generateReport();
+
+      if (format === 'csv') {
+        const csv = complianceReportGenerator.generateCsv(report);
+        reply.header('content-type', 'text/csv');
+        reply.header(
+          'content-disposition',
+          `attachment; filename="sentinel-compliance-report-${new Date().toISOString().slice(0, 10)}.csv"`
+        );
+        return reply.code(200).send(csv);
+      }
+
+      return reply.code(200).send(report);
+    }
+  );
 
   // 5. Quota & Budget Management Endpoints
   fastify.get('/v1/quotas', async (req, reply) => {

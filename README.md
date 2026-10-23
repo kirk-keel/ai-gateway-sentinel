@@ -463,14 +463,108 @@ npm install
 # Run TypeScript compilation
 npm run build
 
-# Run unit and integration tests (34 tests)
+# Run unit and integration tests (95 tests across 17 suites)
 npm test
+
+# Run automated red-teaming security benchmark
+npm run benchmark:security
 
 # Run development mode with hot-reloading
 npm run dev
 
 # Run standalone mock upstream server
 npm run mock-upstream
+```
+
+---
+
+## 💻 Drop-in Client SDKs
+
+Sentinel provides zero-overhead, production-ready SDKs for TypeScript/JavaScript and Python that natively unwrap Sentinel telemetry (`x-sentinel-cost-usd`, `x-sentinel-cache`, `x-sentinel-trace-id`, `x-sentinel-routed-model`):
+
+### TypeScript / Node.js
+```typescript
+import { SentinelClient } from '@ai-gateway/sentinel-sdk';
+
+const sentinel = new SentinelClient({
+  baseUrl: 'http://localhost:8000',
+  tenantId: 'subsurface-geology-team',
+});
+
+// 1. Guardrail inspection
+const check = await sentinel.guardrails.check({
+  text: 'Seismic report for well API 42-501-99887 in Wolfcamp B reservoir.',
+});
+console.log(check.sanitizedText);
+// "Seismic report for well [REDACTED_WELL_API] in [REDACTED_FORMATION] reservoir."
+
+// 2. Chat Completion with automatic FinOps & Routing telemetry
+const response = await sentinel.chat.completions.create({
+  model: 'sentinel-auto',
+  messages: [{ role: 'user', content: 'Explain laminar drill pipe flow.' }],
+});
+console.log(response.choices[0].message.content);
+console.log(`Cost: $${response.telemetry.costUSD} | Cached: ${response.telemetry.cached} | Routed Model: ${response.telemetry.routedModel}`);
+```
+
+### Python
+```python
+from sentinel_ai import SentinelClient
+
+sentinel = SentinelClient(
+    base_url="http://localhost:8000",
+    tenant_id="drilling-ops-copilot"
+)
+
+# 1. Guardrail pre-flight inspection
+result = sentinel.guardrails.check(
+    text="Well location at Lat: 29.7604 N, Lon: -95.3698 W, 12,450 ft TVD"
+)
+print(result["sanitizedText"])
+
+# 2. Chat completion
+resp = sentinel.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Calculate mud hydrostatic head."}]
+)
+print(resp.choices[0]["message"]["content"])
+print(f"Cost: ${resp.cost_usd:.6f} | Cached: {resp.cached} | Trace: {resp.trace_id}")
+```
+
+---
+
+## ⚡ Dynamic Hot-Reloadable Rules Engine
+
+Security teams can hot-patch PII patterns and injection signatures without restarting the gateway or dropping upstream LLM traffic:
+
+```bash
+# Register a custom confidential asset redaction rule at runtime
+curl -X POST http://localhost:8000/v1/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Project Chimera Redaction",
+    "type": "PII",
+    "pattern": "\\bProject\\s+Chimera\\b",
+    "category": "CONFIDENTIAL_PROJECT",
+    "replacementToken": "[REDACTED_PROJECT]"
+  }'
+
+# List active runtime rules
+curl http://localhost:8000/v1/rules?type=PII
+```
+
+---
+
+## 📋 Automated Compliance Audit Reports
+
+Generate cryptographically sealed compliance reports for SOC2 Type II, ISO 27001, and HIPAA BAA audits in JSON or RFC-4180 CSV:
+
+```bash
+# JSON Audit Report with SHA-256 seal
+curl http://localhost:8000/v1/compliance/report
+
+# Download CSV Ledger for Auditors & FinOps
+curl "http://localhost:8000/v1/compliance/report?format=csv" -o compliance-audit.csv
 ```
 
 ---

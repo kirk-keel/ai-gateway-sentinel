@@ -10,7 +10,7 @@ const INDIRECT_INJECTION_PATTERNS = [
   // Markdown links with malicious intent or data exfiltration URLs
   /\[(?:click\s+here|verify|download)\]\(https?:\/\/[^\s\)]+(?:\?|&)exfil=/i,
   // Prompt override embedded in retrieved context or quotes
-  /\[(?:NOTE|SYSTEM|OVERRIDE|INSTRUCTION):\s*(?:disregard\s+all\s+prior|ignore\s+previous|new\s+system\s+directive)[^\]]*\]/i,
+  /\[(?:NOTE|SYSTEM|OVERRIDE|INSTRUCTION|SYSTEM\s+DIRECTIVE):\s*(?:disregard|ignore|new\s+system\s+directive)[^\]]*\]/i,
   // Fake assistant or system turn injection in body
   /\n(?:Assistant|System|Human):\s*(?:Disregard|Forget\s+everything|You\s+are\s+now)\b/i,
 ];
