@@ -96,3 +96,47 @@ export const cacheCostSavedCounter = new client.Counter({
   labelNames: ['model', 'tenant'] as const,
   registers: [register],
 });
+
+// 9. Tenant FinOps Budget Quotas & Enforcement Gauges
+export const tenantBudgetSpentGauge = new client.Gauge({
+  name: 'ai_gateway_tenant_budget_spent_usd',
+  help: 'Current spent amount in USD for tenant within active budget window',
+  labelNames: ['tenant', 'period'] as const, // 'day' | 'month'
+  registers: [register],
+});
+
+export const tenantBudgetLimitGauge = new client.Gauge({
+  name: 'ai_gateway_tenant_budget_limit_usd',
+  help: 'Configured budget limit in USD for tenant',
+  labelNames: ['tenant', 'period'] as const,
+  registers: [register],
+});
+
+export const quotaBlocksCounter = new client.Counter({
+  name: 'ai_gateway_quota_blocks_total',
+  help: 'Total requests blocked due to tenant budget quota limits',
+  labelNames: ['tenant', 'period'] as const,
+  registers: [register],
+});
+
+// 10. Multi-Provider Resiliency & Circuit Breaker Telemetry
+export const circuitStateGauge = new client.Gauge({
+  name: 'ai_gateway_provider_circuit_state',
+  help: 'Current circuit breaker state (0 = CLOSED, 1 = HALF_OPEN, 2 = OPEN)',
+  labelNames: ['provider'] as const,
+  registers: [register],
+});
+
+export const failoverCounter = new client.Counter({
+  name: 'ai_gateway_provider_failovers_total',
+  help: 'Total upstream failover events triggered between providers',
+  labelNames: ['from_provider', 'to_provider'] as const,
+  registers: [register],
+});
+
+export const providerRequestsCounter = new client.Counter({
+  name: 'ai_gateway_provider_requests_total',
+  help: 'Total requests dispatched to specific upstream provider targets',
+  labelNames: ['provider', 'status'] as const,
+  registers: [register],
+});

@@ -20,7 +20,7 @@ export const OPERATIONAL_PII_RULES: RedactionRule[] = [
   {
     category: 'GEOGRAPHIC_COORDINATES',
     replacementToken: '[REDACTED_COORDINATES]',
-    regex: /(?:(?:Lat(?:itude)?\s*[:=]?\s*)?[-+]?(?:[1-8]?\d(?:\.\d{3,8})?|90(?:\.0{3,8})?)\s*(?:°|deg)?\s*[NS]?(?:[\s,;\/]+|\s+and\s+)(?:Lon(?:gitude)?\s*[:=]?\s*)?[-+]?(?:180(?:\.0{3,8})?|(?:1[0-7]\d|[1-9]?\d)(?:\.\d{3,8})?)\s*(?:°|deg)?\s*[EW]?|\bZone\s+\d{1,2}[A-Z]\s+\d{6,7}\s*mE\s+\d{6,7}\s*mN\b)/gi,
+    regex: /(?:(?:\b(?:Lat(?:itude)?\s*[:=]?\s*[-+]?[1-8]?\d(?:\.\d+)?\s*(?:°|deg)?\s*[NS]?(?:[\s,;\/]+|\s+and\s+)(?:Lon(?:gitude)?\s*[:=]?\s*)?[-+]?(?:180(?:\.\d+)?|(?:1[0-7]\d|[1-9]?\d)(?:\.\d+)?)\s*(?:°|deg)?\s*[EW]?)\b)|(?:\b[-+]?[1-8]?\d\.\d{3,8}\s*(?:°|deg)?\s*[NS]?[\s,;\/]+[-+]?(?:180\.\d{3,8}|(?:1[0-7]\d|[1-9]?\d)\.\d{3,8})\s*(?:°|deg)?\s*[EW]?\b)|\bZone\s+\d{1,2}[A-Z]\s+\d{6,7}\s*mE\s+\d{6,7}\s*mN\b)/gi,
     description: 'Drillpad and Wellhead GPS/UTM coordinates',
   },
 

@@ -3,12 +3,19 @@ import { scrubOperationalPII } from './pii-scrubber.js';
 import { GuardrailEvaluationResult } from './types.js';
 import { guardrailLatencyHistogram } from '../metrics/prometheus.js';
 import { recordGuardrailEvent } from '../metrics/finops.js';
+import { tokenVault } from '../vault/token-vault.js';
+import { VaultSession } from '../vault/types.js';
+import { config } from '../config/env.js';
+
+export type GuardrailMode = 'anonymize' | 'redact' | 'block';
 
 export interface GuardrailOptions {
   enabled?: boolean;
+  mode?: GuardrailMode;
   blockOnPii?: boolean;
   injectionThreshold?: number;
   tenant?: string;
+  session?: VaultSession;
 }
 
 export interface ChatMessage {
@@ -54,7 +61,8 @@ export function evaluateGuardrails(
 ): GuardrailEvaluationResult {
   const {
     blockOnPii = false,
-    injectionThreshold = 0.65,
+    mode = blockOnPii ? 'block' : config.GUARDRAILS_MODE,
+    injectionThreshold = config.GUARDRAILS_INJECTION_THRESHOLD,
     tenant = 'default',
   } = options;
 
@@ -87,7 +95,7 @@ export function evaluateGuardrails(
     };
   }
 
-  // 2. Sensitive Operational PII & Confidential Data Scrubbing
+  // 2. Sensitive Operational PII & Confidential Data Detection
   const startPii = performance.now();
   const piiResult = scrubOperationalPII(injectionResult.sanitizedText);
   const endPii = performance.now();
@@ -103,7 +111,7 @@ export function evaluateGuardrails(
   );
 
   if (piiResult.hasPii) {
-    if (blockOnPii) {
+    if (mode === 'block' || blockOnPii) {
       for (const [cat] of Object.entries(piiResult.counts)) {
         recordGuardrailEvent(cat, 'blocked', tenant);
       }
@@ -140,6 +148,7 @@ export function sanitizeChatRequestBody(
   violations: Array<{ rule: string; type: string }>;
   sanitizedBody: Record<string, any>;
   hasRedactions: boolean;
+  session?: VaultSession;
 } {
   if (options.enabled === false) {
     return {
@@ -149,6 +158,17 @@ export function sanitizeChatRequestBody(
       hasRedactions: false,
     };
   }
+
+  const {
+    blockOnPii = false,
+    mode = blockOnPii ? 'block' : config.GUARDRAILS_MODE,
+    injectionThreshold = config.GUARDRAILS_INJECTION_THRESHOLD,
+    tenant = 'default',
+  } = options;
+
+  const session =
+    options.session ||
+    (mode === 'anonymize' ? tokenVault.createSession(undefined, tenant) : undefined);
 
   const sanitizedBody = { ...body };
   let hasRedactions = false;
@@ -160,8 +180,105 @@ export function sanitizeChatRequestBody(
 
     for (const msg of sanitizedBody.messages) {
       const extractedText = extractTextFromContent(msg.content);
-      const evalResult = evaluateGuardrails(extractedText, options);
 
+      // Check prompt injection
+      const injResult = detectPromptInjection(extractedText, injectionThreshold);
+      if (injResult.isInjection) {
+        recordGuardrailEvent('prompt_injection', 'blocked', tenant);
+        return {
+          allowed: false,
+          blockedReason: `Prompt injection attack detected (confidence score: ${injResult.score}, matched patterns: ${injResult.matchedRules.join(', ')})`,
+          violations: injResult.matchedRules.map((r) => ({
+            rule: r,
+            type: 'prompt_injection',
+          })),
+          sanitizedBody: body,
+          hasRedactions: false,
+          session,
+        };
+      }
+
+      // Check PII & Apply Anonymize or Redact or Block
+      if (mode === 'anonymize' && session) {
+        const anonResult = tokenVault.anonymize(injResult.sanitizedText, session);
+        const entityCount = Object.keys(anonResult.entityCounts).length;
+        if (entityCount > 0) {
+          hasRedactions = true;
+          for (const [cat] of Object.entries(anonResult.entityCounts)) {
+            allViolations.push({ rule: cat, type: 'vault_anonymized' });
+            recordGuardrailEvent(cat, 'redacted', tenant);
+          }
+        }
+        updatedMessages.push(updateMessageContent(msg, anonResult.text));
+      } else {
+        const evalResult = evaluateGuardrails(extractedText, {
+          blockOnPii,
+          mode,
+          injectionThreshold,
+          tenant,
+        });
+
+        if (!evalResult.allowed) {
+          return {
+            allowed: false,
+            blockedReason: evalResult.blockedReason,
+            violations: evalResult.injectionResult.matchedRules.map((r) => ({
+              rule: r,
+              type: 'prompt_injection',
+            })),
+            sanitizedBody: body,
+            hasRedactions: false,
+            session,
+          };
+        }
+
+        if (evalResult.piiResult.hasPii) {
+          hasRedactions = true;
+          for (const [category] of Object.entries(evalResult.piiResult.counts)) {
+            allViolations.push({ rule: category, type: 'pii_redacted' });
+          }
+        }
+
+        updatedMessages.push(
+          updateMessageContent(msg, evalResult.transformedContent)
+        );
+      }
+    }
+
+    sanitizedBody.messages = updatedMessages;
+  }
+
+  // Check legacy prompt string if present (e.g. /v1/completions)
+  if (typeof sanitizedBody.prompt === 'string') {
+    const injResult = detectPromptInjection(sanitizedBody.prompt, injectionThreshold);
+    if (injResult.isInjection) {
+      recordGuardrailEvent('prompt_injection', 'blocked', tenant);
+      return {
+        allowed: false,
+        blockedReason: `Prompt injection attack detected`,
+        violations: injResult.matchedRules.map((r) => ({
+          rule: r,
+          type: 'prompt_injection',
+        })),
+        sanitizedBody: body,
+        hasRedactions: false,
+        session,
+      };
+    }
+
+    if (mode === 'anonymize' && session) {
+      const anonResult = tokenVault.anonymize(injResult.sanitizedText, session);
+      if (Object.keys(anonResult.entityCounts).length > 0) {
+        hasRedactions = true;
+      }
+      sanitizedBody.prompt = anonResult.text;
+    } else {
+      const evalResult = evaluateGuardrails(sanitizedBody.prompt, {
+        blockOnPii,
+        mode,
+        injectionThreshold,
+        tenant,
+      });
       if (!evalResult.allowed) {
         return {
           allowed: false,
@@ -172,44 +289,14 @@ export function sanitizeChatRequestBody(
           })),
           sanitizedBody: body,
           hasRedactions: false,
+          session,
         };
       }
-
       if (evalResult.piiResult.hasPii) {
         hasRedactions = true;
-        for (const [category] of Object.entries(evalResult.piiResult.counts)) {
-          allViolations.push({ rule: category, type: 'pii_redacted' });
-        }
       }
-
-      updatedMessages.push(
-        updateMessageContent(msg, evalResult.transformedContent)
-      );
+      sanitizedBody.prompt = evalResult.transformedContent;
     }
-
-    sanitizedBody.messages = updatedMessages;
-  }
-
-  // Check legacy prompt string if present (e.g. /v1/completions)
-  if (typeof sanitizedBody.prompt === 'string') {
-    const evalResult = evaluateGuardrails(sanitizedBody.prompt, options);
-    if (!evalResult.allowed) {
-      return {
-        allowed: false,
-        blockedReason: evalResult.blockedReason,
-        violations: evalResult.injectionResult.matchedRules.map((r) => ({
-          rule: r,
-          type: 'prompt_injection',
-        })),
-        sanitizedBody: body,
-        hasRedactions: false,
-      };
-    }
-
-    if (evalResult.piiResult.hasPii) {
-      hasRedactions = true;
-    }
-    sanitizedBody.prompt = evalResult.transformedContent;
   }
 
   return {
@@ -217,5 +304,6 @@ export function sanitizeChatRequestBody(
     violations: allViolations,
     sanitizedBody,
     hasRedactions,
+    session,
   };
 }

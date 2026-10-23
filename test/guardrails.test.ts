@@ -153,6 +153,7 @@ describe('Guardrails: Combined Pipeline and Request Body Transformation', () => 
 
     const res = sanitizeChatRequestBody(body, {
       enabled: true,
+      mode: 'redact',
       blockOnPii: false,
     });
 

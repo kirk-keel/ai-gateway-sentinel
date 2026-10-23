@@ -4,6 +4,9 @@ import { sanitizeChatRequestBody, evaluateGuardrails } from '../guardrails/index
 import { forwardChatCompletion } from './upstream.js';
 import { register } from '../metrics/prometheus.js';
 import { redisCache } from '../cache/redis-cache.js';
+import { tenantBudgetManager } from '../quota/budget-manager.js';
+import { TenantQuotaPolicy } from '../quota/types.js';
+import { providerDispatcher } from '../resilience/provider-dispatcher.js';
 
 export async function proxyRoutes(
   fastify: FastifyInstance,
@@ -51,6 +54,24 @@ export async function proxyRoutes(
     });
   });
 
+  // Providers & Resiliency Health Endpoint
+  fastify.get('/v1/providers', async (_req, reply) => {
+    const statuses = providerDispatcher.circuitBreaker.getAllStatuses();
+    return reply.code(200).send({
+      object: 'list',
+      data: statuses.map((s) => ({
+        id: s.target.id,
+        name: s.target.name,
+        url: s.target.url,
+        priority: s.target.priority,
+        circuitState: s.state,
+        consecutiveFailures: s.consecutiveFailures,
+        lastFailureTime: s.lastFailureTime ? new Date(s.lastFailureTime).toISOString() : null,
+        lastSuccessTime: s.lastSuccessTime ? new Date(s.lastSuccessTime).toISOString() : null,
+      })),
+    });
+  });
+
   // 4. Pre-Flight Guardrails Inspection Endpoint
   fastify.post<{ Body: { text: string; blockOnPii?: boolean; threshold?: number } }>(
     '/v1/guardrails/check',
@@ -94,7 +115,50 @@ export async function proxyRoutes(
     }
   );
 
-  // 5. OpenAI Chat Completions Proxy with Guardrails & FinOps
+  // 5. Quota & Budget Management Endpoints
+  fastify.get('/v1/quotas', async (req, reply) => {
+    const tenant =
+      (req.headers[config.TENANT_HEADER_NAME] as string) || 'default';
+    const policy = tenantBudgetManager.getPolicy(tenant);
+    const spend = await tenantBudgetManager.getSpend(tenant);
+    const check = await tenantBudgetManager.checkBudget(tenant);
+
+    return reply.code(200).send({
+      tenant,
+      policy,
+      spend,
+      status: {
+        allowed: check.allowed,
+        softLimitExceeded: check.softLimitExceeded,
+        percentConsumed: check.percentConsumed,
+        message: check.message || 'Within quota parameters',
+      },
+    });
+  });
+
+  fastify.post<{ Body: TenantQuotaPolicy }>('/v1/quotas', async (req, reply) => {
+    const policy = req.body;
+    if (!policy || !policy.tenant || typeof policy.dailyBudgetUSD !== 'number') {
+      return reply.code(400).send({
+        error: { message: 'Body must include tenant and dailyBudgetUSD number' },
+      });
+    }
+
+    tenantBudgetManager.setPolicy({
+      tenant: policy.tenant,
+      dailyBudgetUSD: policy.dailyBudgetUSD,
+      monthlyBudgetUSD: policy.monthlyBudgetUSD ?? policy.dailyBudgetUSD * 20,
+      softLimitPercent: policy.softLimitPercent ?? 0.8,
+      actionOnExceed: policy.actionOnExceed ?? 'block',
+    });
+
+    return reply.code(200).send({
+      message: `Quota policy updated for tenant '${policy.tenant}'`,
+      policy: tenantBudgetManager.getPolicy(policy.tenant),
+    });
+  });
+
+  // 6. OpenAI Chat Completions Proxy with Guardrails & FinOps
   fastify.post<{ Body: Record<string, any> }>(
     '/v1/chat/completions',
     async (req, reply) => {
@@ -109,6 +173,27 @@ export async function proxyRoutes(
             code: 'bad_request',
           },
         });
+      }
+
+      // Check Tenant Budget Quota Limits
+      const quotaResult = await tenantBudgetManager.checkBudget(tenant);
+      if (!quotaResult.allowed) {
+        return reply.code(429).send({
+          error: {
+            message: quotaResult.message,
+            type: 'insufficient_quota',
+            code: 'budget_limit_exceeded',
+            details: {
+              currentSpendUSD: quotaResult.currentSpendUSD,
+              budgetCapUSD: quotaResult.budgetCapUSD,
+              period: quotaResult.period,
+            },
+          },
+        });
+      }
+
+      if (quotaResult.softLimitExceeded && quotaResult.message) {
+        reply.header('x-sentinel-budget-warning', quotaResult.message);
       }
 
       // Execute Guardrails: Prompt Injection Check + Sensitive Operational PII Scrubbing
@@ -141,7 +226,8 @@ export async function proxyRoutes(
         req,
         reply,
         guardrailResult.sanitizedBody,
-        tenant
+        tenant,
+        guardrailResult.session
       );
     }
   );

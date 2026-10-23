@@ -22,11 +22,19 @@ const envSchema = z.object({
     .string()
     .transform((val) => val !== 'false' && val !== '0')
     .default('true'),
+  GUARDRAILS_MODE: z.enum(['anonymize', 'redact', 'block']).default('anonymize'),
   GUARDRAILS_BLOCK_ON_PII: z
     .string()
     .transform((val) => val === 'true' || val === '1')
     .default('false'),
   GUARDRAILS_INJECTION_THRESHOLD: z.coerce.number().min(0).max(1).default(0.65),
+  VAULT_TTL_SECONDS: z.coerce.number().default(1800),
+  BUDGET_ENFORCEMENT_ENABLED: z
+    .string()
+    .transform((val) => val !== 'false' && val !== '0')
+    .default('true'),
+  DEFAULT_DAILY_BUDGET_USD: z.coerce.number().default(50.0),
+  DEFAULT_MONTHLY_BUDGET_USD: z.coerce.number().default(1000.0),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
 });
