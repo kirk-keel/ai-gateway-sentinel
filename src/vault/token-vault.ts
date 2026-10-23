@@ -3,6 +3,7 @@ import { VaultSession, AnonymizationResult } from './types.js';
 import { OPERATIONAL_PII_RULES } from '../guardrails/pii-scrubber.js';
 import { config } from '../config/env.js';
 import { redisCache } from '../cache/redis-cache.js';
+import { VaultStorageAdapter, EncryptedVaultStorageAdapter } from './storage-adapter.js';
 
 const CATEGORY_PREFIX_MAP: Record<string, string> = {
   WELL_API_NUMBER: 'WELL',
@@ -20,6 +21,15 @@ const CATEGORY_PREFIX_MAP: Record<string, string> = {
 
 export class TokenVaultManager {
   private inMemoryStore = new Map<string, VaultSession>();
+  private storageAdapter: VaultStorageAdapter = new EncryptedVaultStorageAdapter();
+
+  public setStorageAdapter(adapter: VaultStorageAdapter): void {
+    this.storageAdapter = adapter;
+  }
+
+  public getStorageAdapter(): VaultStorageAdapter {
+    return this.storageAdapter;
+  }
 
   public createSession(
     sessionId: string = crypto.randomUUID(),
@@ -43,6 +53,7 @@ export class TokenVaultManager {
 
   public async saveSession(session: VaultSession): Promise<void> {
     this.inMemoryStore.set(session.sessionId, session);
+    await this.storageAdapter.saveSession(session);
 
     // Save to Redis if Redis is active
     if (redisCache.isHealthy()) {

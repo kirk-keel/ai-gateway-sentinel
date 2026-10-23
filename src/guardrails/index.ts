@@ -7,6 +7,7 @@ import { tokenVault } from '../vault/token-vault.js';
 import { VaultSession } from '../vault/types.js';
 import { config } from '../config/env.js';
 import { webhookDispatcher } from '../alerts/webhook-dispatcher.js';
+import { visionDlpSanitizer } from './vision-dlp.js';
 
 export type GuardrailMode = 'anonymize' | 'redact' | 'block';
 
@@ -254,6 +255,30 @@ export function sanitizeChatRequestBody(
         updatedMessages.push(
           updateMessageContent(msg, evalResult.transformedContent)
         );
+      }
+    }
+
+    // Inspect multi-modal image parts for EXIF GPS / metadata
+    for (let i = 0; i < updatedMessages.length; i++) {
+      const uMsg = updatedMessages[i];
+      if (Array.isArray(uMsg.content)) {
+        uMsg.content = uMsg.content.map((part) => {
+          if (part.type === 'image_url' && typeof (part as any).image_url?.url === 'string') {
+            const vResult = visionDlpSanitizer.sanitizeDataUrl((part as any).image_url.url);
+            if (vResult.hasExifMetadata) {
+              hasRedactions = true;
+              allViolations.push({ rule: 'EXIF_METADATA_STRIPPED', type: 'vision_dlp_sanitized' });
+              return {
+                ...part,
+                image_url: {
+                  ...(part as any).image_url,
+                  url: vResult.sanitizedDataUrl,
+                },
+              };
+            }
+          }
+          return part;
+        });
       }
     }
 

@@ -463,7 +463,7 @@ npm install
 # Run TypeScript compilation
 npm run build
 
-# Run unit and integration tests (95 tests across 17 suites)
+# Run unit and integration tests (113 tests across 22 suites)
 npm test
 
 # Run automated red-teaming security benchmark
@@ -566,6 +566,62 @@ curl http://localhost:8000/v1/compliance/report
 # Download CSV Ledger for Auditors & FinOps
 curl "http://localhost:8000/v1/compliance/report?format=csv" -o compliance-audit.csv
 ```
+
+---
+
+## 🪞 Shadow Traffic Mirroring & A/B Model Drift Analysis
+
+Asynchronously clone a configurable percentage of production traffic to candidate LLMs (e.g. evaluating `claude-3-5-sonnet` or open-source `llama-3.3-70b` against `gpt-4o`) with zero impact on primary client response times:
+
+```bash
+# Configure 20% shadow mirroring to Claude 3.5 Sonnet
+curl -X POST http://localhost:8000/v1/shadow/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "sampleRatePct": 20,
+    "targetModel": "claude-3-5-sonnet",
+    "divergenceThreshold": 0.85
+  }'
+
+# Inspect live model drift, similarity scores, and latency deltas
+curl http://localhost:8000/v1/shadow/metrics
+```
+
+---
+
+## 🎯 RAG Groundedness & Hallucination Guardrail
+
+Analyze LLM responses against retrieved enterprise documents to calculate factual alignment and prevent ungrounded hallucinations:
+
+```bash
+curl -X POST http://localhost:8000/v1/guardrails/groundedness/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "response": "The Eagle Ford formation depth is 11,500 feet. Aliens built the well.",
+    "contexts": ["The Eagle Ford formation depth is 11,500 feet with low permeability."],
+    "threshold": 0.7,
+    "action": "disclaimer"
+  }'
+```
+
+---
+
+## 👁️ Multi-Modal Vision DLP Guardrails
+
+Automatically inspects multi-modal image payloads (`data:image/jpeg;base64,...`) to strip **EXIF GPS coordinates**, camera metadata, and device serial numbers before forwarding to cloud models, preserving image resolution and pixels.
+
+---
+
+## ⚡ Adaptive GPU Concurrency & Leaky-Bucket Queueing
+
+Protects on-premise GPU clusters (vLLM, TGI, Ollama) from CUDA Out-Of-Memory (OOM) crashes by enforcing concurrent request and token caps with strict SLA priority queueing (`CRITICAL` > `STANDARD` > `BATCH`).
+
+---
+
+## 🔐 Envelope Encryption & KMS Vault Storage
+
+Reversible tokenization sessions are cryptographically protected at rest using **AES-256-GCM envelope encryption** with tamper-evident authentication tags and key derivation from cloud KMS (AWS KMS, GCP KMS, HashiCorp Vault).
 
 ---
 

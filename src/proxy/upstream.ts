@@ -12,6 +12,7 @@ import { tenantBudgetManager } from '../quota/budget-manager.js';
 import { providerDispatcher } from '../resilience/provider-dispatcher.js';
 import { inspectModelOutput } from '../guardrails/output-guardrails.js';
 import { recordGuardrailEvent } from '../metrics/finops.js';
+import { trafficMirror } from '../mirroring/traffic-mirror.js';
 
 export async function forwardChatCompletion(
   req: FastifyRequest<{ Body: Record<string, any> }>,
@@ -361,6 +362,23 @@ export async function forwardChatCompletion(
 
   await redisCache.set(cacheKey, cachePayload);
   semanticCache.set(model, promptForCache, cachePayload);
+
+  // 6. Asynchronous Shadow Traffic Mirroring (A/B Model Drift Analysis)
+  if (trafficMirror.shouldMirror()) {
+    const primaryContent = jsonResponse.choices?.[0]?.message?.content || '';
+    const traceId = (req as any).traceId || req.headers['x-sentinel-trace-id'];
+    void trafficMirror.mirrorRequest(
+      sanitizedBody,
+      {
+        content: primaryContent,
+        model,
+        latencyMs: Math.round(latencySeconds * 1000),
+        costUSD,
+        traceId: typeof traceId === 'string' ? traceId : undefined,
+      },
+      clientAuthHeader
+    );
+  }
 
   return reply.code(200).send(jsonResponse);
 }

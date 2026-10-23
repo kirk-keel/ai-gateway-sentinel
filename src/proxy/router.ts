@@ -16,6 +16,9 @@ import { CreateDynamicRuleInput, DynamicRuleType } from '../rules/types.js';
 import { tracer } from '../tracing/tracer.js';
 import { getDashboardHtml } from '../dashboard/html.js';
 import { complianceReportGenerator } from '../compliance/report-generator.js';
+import { trafficMirror } from '../mirroring/traffic-mirror.js';
+import { ShadowMirrorConfig } from '../mirroring/types.js';
+import { groundednessEvaluator, GroundednessEvaluationInput } from '../guardrails/groundedness.js';
 
 export async function proxyRoutes(
   fastify: FastifyInstance,
@@ -233,6 +236,21 @@ export async function proxyRoutes(
     }
   );
 
+  // RAG Groundedness & Hallucination Evaluator Endpoint
+  fastify.post<{ Body: GroundednessEvaluationInput }>(
+    '/v1/guardrails/groundedness/evaluate',
+    async (req, reply) => {
+      const body = req.body;
+      if (!body || !body.response) {
+        return reply.code(400).send({
+          error: { message: 'Body must include "response" string and "contexts" array' },
+        });
+      }
+      const result = groundednessEvaluator.evaluate(body);
+      return reply.code(200).send(result);
+    }
+  );
+
   // Security Alerts & SIEM Incidents Log Endpoint
   fastify.get('/v1/alerts', async (_req, reply) => {
     const alerts = webhookDispatcher.getRecentAlerts();
@@ -273,6 +291,23 @@ export async function proxyRoutes(
       return reply.code(200).send(report);
     }
   );
+
+  // Shadow Traffic Mirroring & A/B Model Drift Analysis
+  fastify.get('/v1/shadow/metrics', async (_req, reply) => {
+    return reply.code(200).send(trafficMirror.getMetricsSummary());
+  });
+
+  fastify.get('/v1/shadow/config', async (_req, reply) => {
+    return reply.code(200).send(trafficMirror.getConfig());
+  });
+
+  fastify.post<{ Body: Partial<ShadowMirrorConfig> }>('/v1/shadow/config', async (req, reply) => {
+    trafficMirror.setConfig(req.body || {});
+    return reply.code(200).send({
+      message: 'Shadow mirroring configuration updated successfully',
+      config: trafficMirror.getConfig(),
+    });
+  });
 
   // 5. Quota & Budget Management Endpoints
   fastify.get('/v1/quotas', async (req, reply) => {
